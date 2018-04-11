@@ -130,18 +130,18 @@ var JsonSchemaGenerator = (function () {
         if (str === undefined) {
             str = typ.text;
         }
-        if (typ.flags & ts.TypeFlags.EnumLiteral) {
-            var num = parseFloat(str);
-            return isNaN(num) ? str : num;
-        }
-        else if (typ.flags & ts.TypeFlags.StringLiteral) {
+        if (typ.flags & ts.TypeFlags.StringLiteral) {
             return str;
-        }
-        else if (typ.flags & ts.TypeFlags.NumberLiteral) {
-            return parseFloat(str);
         }
         else if (typ.flags & ts.TypeFlags.BooleanLiteral) {
             return typ.intrinsicName === "true";
+        }
+        else if (typ.flags & ts.TypeFlags.EnumLiteral) {
+            var num = parseFloat(str);
+            return isNaN(num) ? str : num;
+        }
+        else if (typ.flags & ts.TypeFlags.NumberLiteral) {
+            return parseFloat(str);
         }
         return undefined;
     };
@@ -227,6 +227,9 @@ var JsonSchemaGenerator = (function () {
         return undefined;
     };
     JsonSchemaGenerator.prototype.getDefinitionForProperty = function (prop, tc, node) {
+        if (prop.flags & ts.SymbolFlags.Method) {
+            return null;
+        }
         var propertyName = prop.getName();
         var propertyType = tc.getTypeOfSymbolAtLocation(prop, node);
         var reffedType = this.getReferencedTypeSymbol(prop, tc);
@@ -485,7 +488,7 @@ var JsonSchemaGenerator = (function () {
                 var requiredProps = props.reduce(function (required, prop) {
                     var def = {};
                     _this.parseCommentsIntoDefinition(prop, def, {});
-                    if (!(prop.flags & ts.SymbolFlags.Optional) && !prop.mayBeUndefined && !def.hasOwnProperty("ignore")) {
+                    if (!(prop.flags & ts.SymbolFlags.Optional) && !(prop.flags & ts.SymbolFlags.Method) && !prop.mayBeUndefined && !def.hasOwnProperty("ignore")) {
                         required.push(prop.getName());
                     }
                     return required;
@@ -692,9 +695,15 @@ var JsonSchemaGenerator = (function () {
     JsonSchemaGenerator.prototype.getUserSymbols = function () {
         return Object.keys(this.userSymbols);
     };
-    JsonSchemaGenerator.prototype.getMainFileSymbols = function (program) {
+    JsonSchemaGenerator.prototype.getMainFileSymbols = function (program, onlyIncludeFiles) {
         var _this = this;
-        var files = program.getSourceFiles().filter(function (file) { return !file.isDeclarationFile; });
+        function includeFile(file) {
+            if (onlyIncludeFiles === undefined) {
+                return !file.isDeclarationFile;
+            }
+            return onlyIncludeFiles.indexOf(file.fileName) >= 0;
+        }
+        var files = program.getSourceFiles().filter(includeFile);
         if (files.length) {
             return Object.keys(this.userSymbols).filter(function (key) {
                 var symbol = _this.userSymbols[key];
@@ -812,7 +821,7 @@ function buildGenerator(program, args) {
     }
 }
 exports.buildGenerator = buildGenerator;
-function generateSchema(program, fullTypeName, args) {
+function generateSchema(program, fullTypeName, args, onlyIncludeFiles) {
     if (args === void 0) { args = {}; }
     var generator = buildGenerator(program, args);
     if (generator === null) {
@@ -820,7 +829,7 @@ function generateSchema(program, fullTypeName, args) {
     }
     var definition;
     if (fullTypeName === "*") {
-        definition = generator.getSchemaForSymbols(generator.getMainFileSymbols(program));
+        definition = generator.getSchemaForSymbols(generator.getMainFileSymbols(program, onlyIncludeFiles));
     }
     else {
         definition = generator.getSchemaForSymbol(fullTypeName);
@@ -842,18 +851,27 @@ function programFromConfig(configFileName) {
     return program;
 }
 exports.programFromConfig = programFromConfig;
+function normalizeFileName(fn) {
+    while (fn.substr(0, 2) === "./") {
+        fn = fn.substr(2);
+    }
+    return fn;
+}
 function exec(filePattern, fullTypeName, args) {
     if (args === void 0) { args = getDefaultArgs(); }
     var program;
+    var onlyIncludeFiles = undefined;
     if (REGEX_TSCONFIG_NAME.test(path.basename(filePattern))) {
         program = programFromConfig(filePattern);
     }
     else {
-        program = getProgramFromFiles(glob.sync(filePattern), {
+        onlyIncludeFiles = glob.sync(filePattern);
+        program = getProgramFromFiles(onlyIncludeFiles, {
             strictNullChecks: args.strictNullChecks
         });
+        onlyIncludeFiles = onlyIncludeFiles.map(normalizeFileName);
     }
-    var definition = generateSchema(program, fullTypeName, args);
+    var definition = generateSchema(program, fullTypeName, args, onlyIncludeFiles);
     if (definition === null) {
         return;
     }
