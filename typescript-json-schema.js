@@ -156,7 +156,6 @@ var JsonSchemaGenerator = (function () {
     };
     JsonSchemaGenerator.prototype.getDefinitionForRootType = function (propertyType, tc, reffedType, definition) {
         var _this = this;
-        var symbol = propertyType.getSymbol();
         var tupleType = this.resolveTupleType(propertyType);
         if (tupleType) {
             var elemTypes = tupleType.elementTypes || propertyType.typeArguments;
@@ -170,48 +169,48 @@ var JsonSchemaGenerator = (function () {
         }
         else {
             var propertyTypeString = tc.typeToString(propertyType, undefined, ts.TypeFormatFlags.UseFullyQualifiedType);
-            switch (propertyTypeString.toLowerCase()) {
-                case "string":
-                    definition.type = "string";
-                    break;
-                case "number":
-                    var isInteger = (definition.type === "integer" || (reffedType && reffedType.getName() === "integer"));
-                    definition.type = isInteger ? "integer" : "number";
-                    break;
-                case "boolean":
-                    definition.type = "boolean";
-                    break;
-                case "null":
-                    definition.type = "null";
-                    break;
-                case "undefined":
-                    definition.type = "undefined";
-                    break;
-                case "any":
-                    break;
-                case "date":
-                    definition.type = "string";
-                    definition.format = "date-time";
-                    break;
-                default:
-                    var value = this.extractLiteralValue(propertyType);
-                    if (value !== undefined) {
-                        definition.type = typeof value;
-                        definition.enum = [value];
+            var flags = propertyType.flags;
+            var arrayType = tc.getIndexTypeOfType(propertyType, ts.IndexKind.Number);
+            if (flags & ts.TypeFlags.String) {
+                definition.type = "string";
+            }
+            else if (flags & ts.TypeFlags.Number) {
+                var isInteger = (definition.type === "integer" || (reffedType && reffedType.getName() === "integer"));
+                definition.type = isInteger ? "integer" : "number";
+            }
+            else if (flags & ts.TypeFlags.Boolean) {
+                definition.type = "boolean";
+            }
+            else if (flags & ts.TypeFlags.Null) {
+                definition.type = "null";
+            }
+            else if (flags & ts.TypeFlags.Undefined) {
+                definition.type = "undefined";
+            }
+            else if (flags & ts.TypeFlags.Any) {
+            }
+            else if (propertyTypeString === "date") {
+                definition.type = "string";
+                definition.format = "date-time";
+            }
+            else {
+                var value = this.extractLiteralValue(propertyType);
+                if (value !== undefined) {
+                    definition.type = typeof value;
+                    definition.enum = [value];
+                }
+                else if (arrayType !== undefined) {
+                    definition.type = "array";
+                    definition.items = this.getTypeDefinition(arrayType, tc);
+                }
+                else {
+                    var info = propertyType;
+                    try {
+                        info = JSON.stringify(propertyType);
                     }
-                    else if (symbol && (symbol.getName() === "Array" || symbol.getName() === "ReadonlyArray")) {
-                        var arrayType = propertyType.typeArguments[0];
-                        definition.type = "array";
-                        definition.items = this.getTypeDefinition(arrayType, tc);
-                    }
-                    else {
-                        var info = propertyType;
-                        try {
-                            info = JSON.stringify(propertyType);
-                        }
-                        catch (err) { }
-                        console.error("Unsupported type: ", info);
-                    }
+                    catch (err) { }
+                    console.error("Unsupported type: ", info);
+                }
             }
         }
         return definition;
@@ -243,6 +242,9 @@ var JsonSchemaGenerator = (function () {
         var valDecl = prop.valueDeclaration;
         if (valDecl && valDecl.initializer) {
             var initial = valDecl.initializer;
+            while (ts.isTypeAssertion(initial)) {
+                initial = initial.expression;
+            }
             if (initial.expression) {
                 console.warn("initializer is expression for property " + propertyName);
             }
@@ -575,7 +577,7 @@ var JsonSchemaGenerator = (function () {
         }
         var returnedDefinition = definition;
         var symbol = typ.getSymbol();
-        var isRawType = (!symbol || symbol.name === "integer" || symbol.name === "Array" || symbol.name === "ReadonlyArray" || symbol.name === "Date");
+        var isRawType = (!symbol || symbol.name === "Date" || symbol.name === "integer" || tc.getIndexInfoOfType(typ, ts.IndexKind.Number) !== undefined);
         var isStringEnum = false;
         if (typ.flags & ts.TypeFlags.Union) {
             var unionType = typ;
