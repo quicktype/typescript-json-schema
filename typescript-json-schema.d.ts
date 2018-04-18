@@ -78,6 +78,7 @@ export declare class JsonSchemaGenerator {
     private getDefinitionForProperty(prop, tc, node);
     private getEnumDefinition(clazzType, tc, definition);
     private getUnionDefinition(unionType, prop, tc, unionModifier, definition);
+    private getIntersectionDefinition(intersectionType, tc, definition);
     private getClassDefinition(clazzType, tc, definition);
     private simpleTypesAllowedProperties;
     private addSimpleType(def, type);
