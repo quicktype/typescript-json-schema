@@ -189,7 +189,7 @@ var JsonSchemaGenerator = (function () {
             }
             else if (flags & ts.TypeFlags.Any) {
             }
-            else if (propertyTypeString === "date") {
+            else if (propertyTypeString === "Date") {
                 definition.type = "string";
                 definition.format = "date-time";
             }
