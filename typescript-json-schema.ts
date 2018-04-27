@@ -206,16 +206,20 @@ export class JsonSchemaGenerator {
         }
     }
 
+    private getArrayType(typ: ts.Type, tc: ts.TypeChecker): ts.Type | undefined {
+        return tc.getIndexTypeOfType(typ, ts.IndexKind.Number);
+    }
+
     /**
      * Parse the comments of a symbol into the definition and other annotations.
      */
-    private parseCommentsIntoDefinition(symbol: ts.Symbol, definition: {description?: string}, otherAnnotations: {}): void {
+    private parseCommentsIntoDefinition(symbol: ts.Symbol, tc: ts.TypeChecker, definition: {description?: string}, otherAnnotations: {}): void {
         if (!symbol) {
             return;
         }
 
         // the comments for a symbol
-        let comments = symbol.getDocumentationComment();
+        let comments = symbol.getDocumentationComment(tc);
 
         if (comments.length) {
             definition.description = comments.map(comment => comment.kind === "lineBreak" ? comment.text : comment.text.trim().replace(/\r\n/g, "\n")).join("");
@@ -225,9 +229,9 @@ export class JsonSchemaGenerator {
         const jsdocs = symbol.getJsDocTags();
         jsdocs.forEach(doc => {
             // if we have @TJS-... annotations, we have to parse them
-            const [name, text] = (doc.name === "TJS" ? new RegExp(REGEX_TJS_JSDOC).exec(doc.text!)!.slice(1,3) : [doc.name, doc.text]) as string[];
+            const [name, text] = doc.name === "TJS" ? new RegExp(REGEX_TJS_JSDOC).exec(doc.text!)!.slice(1,3) as [string, string] : [doc.name, doc.text];
             if (JsonSchemaGenerator.validationKeywords[name] || this.userValidationKeywords[name]) {
-                definition[name] = this.parseValue(text);
+                definition[doc.name] = text === undefined ? "" : this.parseValue(text);
             } else {
                 // special annotations
                 otherAnnotations[doc.name] = true;
@@ -282,7 +286,7 @@ export class JsonSchemaGenerator {
         } else {
             const propertyTypeString = tc.typeToString(propertyType, undefined, ts.TypeFormatFlags.UseFullyQualifiedType);
             const flags = propertyType.flags;
-            const arrayType = tc.getIndexTypeOfType(propertyType, ts.IndexKind.Number);
+            const arrayType = this.getArrayType(propertyType, tc);
 
             if (flags & ts.TypeFlags.String) {
                 definition.type = "string";
@@ -667,7 +671,7 @@ export class JsonSchemaGenerator {
             if (this.args.required) {
                 const requiredProps = props.reduce((required: string[], prop: ts.Symbol) => {
                     let def = {};
-                    this.parseCommentsIntoDefinition(prop, def, {});
+                    this.parseCommentsIntoDefinition(prop, tc, def, {});
                     if (!(prop.flags & ts.SymbolFlags.Optional) && !(<any>prop).mayBeUndefined && !def.hasOwnProperty("ignore")) {
                         required.push(prop.getName());
                     }
@@ -761,6 +765,15 @@ export class JsonSchemaGenerator {
     }
 
     private getTypeDefinition(typ: ts.Type, tc: ts.TypeChecker, asRef = this.args.ref, unionModifier: string = "anyOf", prop?: ts.Symbol, reffedType?: ts.Symbol, pairedSymbol?: ts.Symbol): Definition {
+        if (
+            pairedSymbol !== undefined &&
+            (pairedSymbol.flags & ts.SymbolFlags.TypeAlias) &&
+            typ.symbol !== undefined &&
+            this.getArrayType(typ, tc) === undefined
+        ) {
+            asRef = true;
+            reffedType = typ.symbol;
+        }
         const definition: Definition = {}; // real definition
 
         if (this.args.typeOfKeyword && (typ.flags & ts.TypeFlags.Object) && ((<ts.ObjectType>typ).objectFlags & ts.ObjectFlags.Anonymous)) {
@@ -813,17 +826,17 @@ export class JsonSchemaGenerator {
 
         // Parse comments
         const otherAnnotations = {};
-        this.parseCommentsIntoDefinition(reffedType!, definition, otherAnnotations); // handle comments in the type alias declaration
+        this.parseCommentsIntoDefinition(reffedType!, tc, definition, otherAnnotations); // handle comments in the type alias declaration
         if (prop) {
-            this.parseCommentsIntoDefinition(prop, returnedDefinition, otherAnnotations);
+            this.parseCommentsIntoDefinition(prop, tc, returnedDefinition, otherAnnotations);
         }
-        this.parseCommentsIntoDefinition(symbol!, definition, otherAnnotations);
+        this.parseCommentsIntoDefinition(symbol!, tc, definition, otherAnnotations);
 
         // Create the actual definition only if is an inline definition, or
         // if it will be a $ref and it is not yet created
         if (!asRef || !this.reffedDefinitions[fullTypeName]) {
             if (asRef) { // must be here to prevent recursivity problems
-                this.reffedDefinitions[fullTypeName] = asTypeAliasRef && reffedType!.getFlags() & ts.TypeFlags.IndexedAccess && symbol ? this.getTypeDefinition(typ, tc, true, undefined, symbol, symbol) : definition;
+                // this.reffedDefinitions[fullTypeName] = asTypeAliasRef && reffedType!.getFlags() & ts.TypeFlags.IndexedAccess && symbol ? this.getTypeDefinition(typ, tc, true, undefined, symbol, symbol) : definition;
                 if (this.args.titles && fullTypeName) {
                     definition.title = fullTypeName;
                 }
@@ -857,7 +870,7 @@ export class JsonSchemaGenerator {
                     }
                 } else if (isRawType) {
                     if (pairedSymbol) {
-                        this.parseCommentsIntoDefinition(pairedSymbol, definition, {});
+                        this.parseCommentsIntoDefinition(pairedSymbol, tc, definition, {});
                     }
                     this.getDefinitionForRootType(typ, tc, reffedType!, definition);
                 } else if (node && (node.kind === ts.SyntaxKind.EnumDeclaration || node.kind === ts.SyntaxKind.EnumMember)) {
