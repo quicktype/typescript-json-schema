@@ -50,11 +50,10 @@ export declare type Definition = {
 };
 export declare class JsonSchemaGenerator {
     private args;
-    private static validationKeywords;
+    private tc;
     private allSymbols;
     private userSymbols;
     private inheritingTypes;
-    private tc;
     private reffedDefinitions;
     private userValidationKeywords;
     private typeNamesById;
@@ -69,22 +68,16 @@ export declare class JsonSchemaGenerator {
     readonly ReffedDefinitions: {
         [key: string]: Definition;
     };
-    private parseValue(value);
     private parseCommentsIntoDefinition(symbol, definition, otherAnnotations);
-    private extractLiteralValue(typ);
-    private resolveTupleType(propertyType);
-    private getDefinitionForRootType(propertyType, tc, reffedType, definition);
-    private getReferencedTypeSymbol(prop, tc);
-    private getDefinitionForProperty(prop, tc, node);
-    private getEnumDefinition(clazzType, tc, definition);
-    private getUnionDefinition(unionType, prop, tc, unionModifier, definition);
-    private getIntersectionDefinition(intersectionType, tc, definition);
-    private getClassDefinition(clazzType, tc, definition);
-    private simpleTypesAllowedProperties;
-    private addSimpleType(def, type);
-    private makeNullable(def);
-    private getTypeName(typ, tc);
-    private getTypeDefinition(typ, tc, asRef?, unionModifier?, prop?, reffedType?, pairedSymbol?);
+    private getDefinitionForRootType(propertyType, reffedType, definition);
+    private getReferencedTypeSymbol(prop);
+    private getDefinitionForProperty(prop, node);
+    private getEnumDefinition(clazzType, definition);
+    private getUnionDefinition(unionType, prop, unionModifier, definition);
+    private getIntersectionDefinition(intersectionType, definition);
+    private getClassDefinition(clazzType, definition);
+    private getTypeName(typ);
+    private getTypeDefinition(typ, asRef?, unionModifier?, prop?, reffedType?, pairedSymbol?);
     setSchemaOverride(symbolName: string, schema: Definition): void;
     getSchemaForSymbol(symbolName: string, includeReffedDefinitions?: boolean): Definition;
     getSchemaForSymbols(symbolNames: string[], includeReffedDefinitions?: boolean): Definition;
