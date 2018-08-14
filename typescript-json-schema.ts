@@ -1,13 +1,14 @@
 import * as glob from "glob";
 import * as stringify from "json-stable-stringify";
 import * as path from "path";
+import { createHash } from "crypto";
 import * as ts from "typescript";
-export { Program, CompilerOptions } from "typescript";
+export { Program, CompilerOptions, Symbol } from "typescript";
 
 
 const vm = require("vm");
 
-const REGEX_FILE_NAME = /".*"\./;
+const REGEX_FILE_NAME_OR_SPACE = /(\bimport\(".*?"\)|".*?")\.| /g;
 const REGEX_TSCONFIG_NAME = /^.*\.json$/;
 const REGEX_TJS_JSDOC = /^-([\w]+)\s+(\S|\S[\s\S]*\S)\s*$/g;
 
@@ -26,7 +27,11 @@ export function getDefaultArgs(): Args {
         ignoreErrors: false,
         out: "",
         validationKeywords: [],
+        include: [],
         excludePrivate: false,
+        uniqueNames: false,
+        rejectDateType: false,
+        id: "",
     };
 }
 
@@ -48,7 +53,11 @@ export type Args = {
     ignoreErrors: boolean;
     out: string;
     validationKeywords: string[];
+    include: string[];
     excludePrivate: boolean;
+    uniqueNames: boolean;
+    rejectDateType: boolean;
+    id: string;
 };
 
 export type PartialArgs = Partial<Args>;
@@ -57,6 +66,8 @@ export type PrimitiveType = number | boolean | string | null;
 
 export type Definition = {
     $ref?: string,
+    $schema?: string,
+    $id?: string,
     description?: string,
     allOf?: Definition[],
     oneOf?: Definition[],
@@ -69,16 +80,23 @@ export type Definition = {
     minItems?: number,
     additionalItems?: {
         anyOf: Definition[]
-    },
+    } | Definition,
     enum?: PrimitiveType[] | Definition[],
     default?: PrimitiveType | Object,
     additionalProperties?: Definition | boolean,
     required?: string[],
     propertyOrder?: string[],
-    properties?: {},
+    properties?: {[key: string]: any},
     defaultProperties?: string[],
 
     typeof?: "function"
+};
+
+export type SymbolRef = {
+  name: string;
+  typeName: string;
+  fullyQualifiedName: string;
+  symbol: ts.Symbol;
 };
 
 function extend(target: any, ..._: any[]) {
@@ -262,6 +280,11 @@ export class JsonSchemaGenerator {
     private tc: ts.TypeChecker;
 
     /**
+     * Holds all symbols within a custom SymbolRef object, containing useful
+     * information.
+     */
+    private symbols: SymbolRef[];
+    /**
      * All types for declarations of classes, interfaces, enums, and type aliases
      * defined in all TS files.
      */
@@ -296,12 +319,14 @@ export class JsonSchemaGenerator {
     private typeNamesUsed: { [name: string]: boolean } = {};
 
     constructor(
+      symbols: SymbolRef[],
       allSymbols: { [name: string]: ts.Type },
       userSymbols: { [name: string]: ts.Symbol },
       inheritingTypes: { [baseName: string]: string[] },
       tc: ts.TypeChecker,
       private args = getDefaultArgs(),
     ) {
+        this.symbols = symbols;
         this.allSymbols = allSymbols;
         this.userSymbols = userSymbols;
         this.inheritingTypes = inheritingTypes;
@@ -353,10 +378,16 @@ export class JsonSchemaGenerator {
             const fixedTypes = elemTypes.map(elType => this.getTypeDefinition(elType as any));
             definition.type = "array";
             definition.items = fixedTypes;
-            definition.minItems = fixedTypes.length;
-            definition.additionalItems = {
-                anyOf: fixedTypes
-            };
+            const targetTupleType = (propertyType as ts.TupleTypeReference).target;
+            definition.minItems = targetTupleType.minLength;
+            if (targetTupleType.hasRestElement) {
+                definition.additionalItems = fixedTypes[fixedTypes.length - 1];
+                fixedTypes.splice(fixedTypes.length - 1, 1);
+            } else {
+                definition.additionalItems = {
+                    anyOf: fixedTypes
+                };
+            }
         } else {
             const propertyTypeString = this.tc.typeToString(propertyType, undefined, ts.TypeFormatFlags.UseFullyQualifiedType);
             const flags = propertyType.flags;
@@ -375,9 +406,13 @@ export class JsonSchemaGenerator {
                 definition.type = "undefined";
             } else if (flags & ts.TypeFlags.Any) {
                 // no type restriction, so that anything will match
-            } else if (propertyTypeString === "Date") {
+            } else if (propertyTypeString === "Date" && !this.args.rejectDateType) {
                 definition.type = "string";
                 definition.format = "date-time";
+            }  else if (propertyTypeString === "object") {
+                definition.type = "object";
+                definition.properties = {};
+                definition.additionalProperties = true;
             } else {
                 const value = extractLiteralValue(propertyType);
                 if (value !== undefined) {
@@ -388,11 +423,9 @@ export class JsonSchemaGenerator {
                     definition.items = this.getTypeDefinition(arrayType);
                 } else {
                     // Report that type could not be processed
-                    let info: any = propertyType;
-                    try {
-                        info = JSON.stringify(propertyType);
-                    } catch(err) {}
-                    console.error("Unsupported type: ", info);
+                    const error = new TypeError("Unsupported type: " + propertyTypeString);
+                    (error as any).type = propertyType;
+                    throw error;
                     // definition = this.getTypeDefinition(propertyType, tc);
                 }
             }
@@ -406,13 +439,20 @@ export class JsonSchemaGenerator {
         if (decl && decl.length) {
             const type = (<ts.TypeReferenceNode> (<any> decl[0]).type);
             if (type && (type.kind & ts.SyntaxKind.TypeReference) && type.typeName) {
-                return this.tc.getSymbolAtLocation(type.typeName);
+                const symbol = this.tc.getSymbolAtLocation(type.typeName);
+                if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+                    return this.tc.getAliasedSymbol(symbol);
+                }
+                return symbol;
             }
         }
         return undefined;
     }
 
     private getDefinitionForProperty(prop: ts.Symbol, node: ts.Node) {
+        if (prop.flags & ts.SymbolFlags.Method) {
+            return null;
+        }
         const propertyName = prop.getName();
         const propertyType = this.tc.getTypeOfSymbolAtLocation(prop, node);
 
@@ -745,7 +785,7 @@ export class JsonSchemaGenerator {
                 const requiredProps = props.reduce((required: string[], prop: ts.Symbol) => {
                     const def = {};
                     this.parseCommentsIntoDefinition(prop, def, {});
-                    if (!(prop.flags & ts.SymbolFlags.Optional) && !(<any>prop).mayBeUndefined && !def.hasOwnProperty("ignore")) {
+                    if (!(prop.flags & ts.SymbolFlags.Optional) && !(prop.flags & ts.SymbolFlags.Method) && !(<any>prop).mayBeUndefined && !def.hasOwnProperty("ignore")) {
                         required.push(prop.getName());
                     }
                     return required;
@@ -768,7 +808,7 @@ export class JsonSchemaGenerator {
             return this.typeNamesById[id];
         }
 
-        const baseName = this.tc.typeToString(typ, undefined, ts.TypeFormatFlags.UseFullyQualifiedType);
+        const baseName = this.tc.typeToString(typ, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseFullyQualifiedType).replace(REGEX_FILE_NAME_OR_SPACE, "");
         let name = baseName;
         if (this.typeNamesUsed[name]) { // If a type with same name exists
             for (let i = 1; true; ++i) { // Try appending "_1", "_2", etc.
@@ -786,6 +826,12 @@ export class JsonSchemaGenerator {
 
     private getTypeDefinition(typ: ts.Type, asRef = this.args.ref, unionModifier: string = "anyOf", prop?: ts.Symbol, reffedType?: ts.Symbol, pairedSymbol?: ts.Symbol): Definition {
         const definition: Definition = {}; // real definition
+
+        // Ignore any number of Readonly and Mutable type wrappings, since they only add and remove readonly modifiers on fields and JSON Schema is not concerned with mutability
+        while (typ.aliasSymbol && (typ.aliasSymbol.escapedName === "Readonly" || typ.aliasSymbol.escapedName === "Mutable") && typ.aliasTypeArguments && typ.aliasTypeArguments[0]) {
+            typ = typ.aliasTypeArguments[0];
+            reffedType = undefined;
+        }
 
         if (this.args.typeOfKeyword && (typ.flags & ts.TypeFlags.Object) && ((<ts.ObjectType>typ).objectFlags & ts.ObjectFlags.Anonymous)) {
             definition.typeof = "function";
@@ -822,18 +868,16 @@ export class JsonSchemaGenerator {
                 reffedType!.getFlags() & ts.SymbolFlags.Alias ?
                     this.tc.getAliasedSymbol(reffedType!) :
                     reffedType!
-            ).replace(REGEX_FILE_NAME, "");
+            ).replace(REGEX_FILE_NAME_OR_SPACE, "");
         } else if (asRef) {
             fullTypeName = this.getTypeName(typ);
         }
-
-        fullTypeName = fullTypeName.replace(" ", "");
 
         if (asRef) {
             // We don't return the full definition, but we put it into
             // reffedDefinitions below.
             returnedDefinition = {
-                $ref:  "#/definitions/" + fullTypeName
+                $ref:  `${this.args.id}#/definitions/` + fullTypeName
             };
         }
 
@@ -850,7 +894,7 @@ export class JsonSchemaGenerator {
         if (!asRef || !this.reffedDefinitions[fullTypeName]) {
             if (asRef) { // must be here to prevent recursivity problems
                 let reffedDefinition: Definition;
-                if (asTypeAliasRef && reffedType!.getFlags() & (ts.TypeFlags.IndexedAccess | ts.TypeFlags.Index) && symbol) {
+                if (asTypeAliasRef && reffedType!.getFlags() & (ts.TypeFlags.IndexedAccess | ts.TypeFlags.Index | ts.TypeFlags.Intersection) && symbol) {
                     reffedDefinition = this.getTypeDefinition(typ, true, undefined, symbol, symbol);
                 } else {
                     reffedDefinition = definition;
@@ -924,15 +968,25 @@ export class JsonSchemaGenerator {
         if (this.args.ref && includeReffedDefinitions && Object.keys(this.reffedDefinitions).length > 0) {
             def.definitions = this.reffedDefinitions;
         }
-        def["$schema"] = "http://json-schema.org/draft-06/schema#";
+        def["$schema"] = "http://json-schema.org/draft-07/schema#";
+        const id = this.args.id;
+        if(id) {
+            def["$id"] = this.args.id;
+        }
         return def;
     }
 
     public getSchemaForSymbols(symbolNames: string[], includeReffedDefinitions: boolean = true): Definition {
         const root = {
-            $schema: "http://json-schema.org/draft-06/schema#",
+            $schema: "http://json-schema.org/draft-07/schema#",
             definitions: {}
         };
+        const id = this.args.id;
+
+        if(id) {
+            root["$id"] = id;
+        }
+
         for (const symbolName of symbolNames) {
             root.definitions[symbolName] = this.getTypeDefinition(this.allSymbols[symbolName], this.args.topRef, undefined, undefined, undefined, this.userSymbols[symbolName]);
         }
@@ -942,12 +996,26 @@ export class JsonSchemaGenerator {
         return root;
     }
 
+    public getSymbols(name?: string): SymbolRef[] {
+      if (name === void 0) {
+        return this.symbols;
+      }
+
+      return this.symbols.filter(symbol => symbol.typeName === name);
+    }
+
     public getUserSymbols(): string[] {
         return Object.keys(this.userSymbols);
     }
 
-    public getMainFileSymbols(program: ts.Program): string[] {
-        const files = program.getSourceFiles().filter(file => !file.isDeclarationFile);
+    public getMainFileSymbols(program: ts.Program, onlyIncludeFiles?: string[]): string[] {
+        function includeFile(file: ts.SourceFile): boolean {
+            if (onlyIncludeFiles === undefined) {
+                return !file.isDeclarationFile;
+            }
+            return onlyIncludeFiles.indexOf(file.fileName) >= 0;
+        }
+        const files = program.getSourceFiles().filter(includeFile);
         if (files.length) {
             return Object.keys(this.userSymbols).filter((key) => {
                 const symbol = this.userSymbols[key];
@@ -969,7 +1037,7 @@ export function getProgramFromFiles(files: string[], jsonCompilerOptions: any = 
     // use built-in default options
     const compilerOptions = ts.convertCompilerOptionsFromJson(jsonCompilerOptions, basePath).options;
     const options: ts.CompilerOptions = {
-        noEmit: true, emitDecoratorMetadata: true, experimentalDecorators: true, target: ts.ScriptTarget.ES5, module: ts.ModuleKind.CommonJS
+        noEmit: true, emitDecoratorMetadata: true, experimentalDecorators: true, target: ts.ScriptTarget.ES5, module: ts.ModuleKind.CommonJS, allowUnusedLabels: true,
     };
     for (const k in compilerOptions) {
         if (compilerOptions.hasOwnProperty(k)) {
@@ -979,7 +1047,17 @@ export function getProgramFromFiles(files: string[], jsonCompilerOptions: any = 
     return ts.createProgram(files, options);
 }
 
-export function buildGenerator(program: ts.Program, args: PartialArgs = {}): JsonSchemaGenerator|null {
+function generateHashOfNode(node: ts.Node, relativePath: string) {
+    return createHash("md5").update(relativePath).update(node.pos.toString()).digest("hex").substring(0, 8);
+}
+
+export function buildGenerator(program: ts.Program, args: PartialArgs = {}, onlyIncludeFiles?: string[]): JsonSchemaGenerator|null {
+    function isUserFile(file: ts.SourceFile): boolean {
+        if (onlyIncludeFiles === undefined) {
+            return !file.hasNoDefaultLib;
+        }
+        return onlyIncludeFiles.indexOf(file.fileName) >= 0;
+    }
     // Use defaults unles otherwise specified
     const settings = getDefaultArgs();
 
@@ -989,17 +1067,24 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}): Jso
         }
     }
 
-    const typeChecker = program.getTypeChecker();
+    let diagnostics: Array<ts.Diagnostic> = [];
 
-    var diagnostics = ts.getPreEmitDiagnostics(program);
+    if (!args.ignoreErrors) {
+        diagnostics = ts.getPreEmitDiagnostics(program);
+    }
 
-    if (diagnostics.length === 0 || args.ignoreErrors) {
+    if (diagnostics.length === 0) {
+        const typeChecker = program.getTypeChecker();
 
+        const symbols: SymbolRef[] = [];
         const allSymbols: { [name: string]: ts.Type } = {};
         const userSymbols: { [name: string]: ts.Symbol } = {};
         const inheritingTypes: { [baseName: string]: string[] } = {};
+        const workingDir = program.getCurrentDirectory();
 
         program.getSourceFiles().forEach((sourceFile, _sourceFileIdx) => {
+            const relativePath = path.relative(workingDir, sourceFile.fileName);
+
             function inspect(node: ts.Node, tc: ts.TypeChecker) {
 
                 if (node.kind === ts.SyntaxKind.ClassDeclaration
@@ -1008,20 +1093,18 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}): Jso
                   || node.kind === ts.SyntaxKind.TypeAliasDeclaration
                 ) {
                     const symbol: ts.Symbol = (<any>node).symbol;
-
                     const nodeType = tc.getTypeAtLocation(node);
+                    const fullyQualifiedName = tc.getFullyQualifiedName(symbol);
+                    const typeName = fullyQualifiedName.replace(/".*"\./, "");
+                    const name = !args.uniqueNames ? typeName : `${typeName}.${generateHashOfNode(node, relativePath)}`;
 
-                    // remove file name
-                    // TODO: we probably don't want this eventually,
-                    // as same types can occur in different files and will override eachother in allSymbols
-                    // This means atm we can't generate all types in large programs.
-                    const fullName = tc.getFullyQualifiedName(symbol).replace(/".*"\./, "");
+                    symbols.push({ name, typeName, fullyQualifiedName, symbol });
+                    if (!userSymbols[name]) {
+                        allSymbols[name] = nodeType;
+                    }
 
-                    allSymbols[fullName] = nodeType;
-
-                    // if (sourceFileIdx === 1) {
-                    if (!sourceFile.hasNoDefaultLib) {
-                        userSymbols[fullName] = symbol;
+                    if (isUserFile(sourceFile)) {
+                        userSymbols[name] = symbol;
                     }
 
                     const baseTypes = nodeType.getBaseTypes() || [];
@@ -1031,7 +1114,7 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}): Jso
                         if (!inheritingTypes[baseName]) {
                             inheritingTypes[baseName] = [];
                         }
-                        inheritingTypes[baseName].push(fullName);
+                        inheritingTypes[baseName].push(name);
                     });
                 } else {
                     ts.forEachChild(node, n => inspect(n, tc));
@@ -1040,7 +1123,7 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}): Jso
             inspect(sourceFile, typeChecker);
         });
 
-        return new JsonSchemaGenerator(allSymbols, userSymbols, inheritingTypes, typeChecker, settings);
+        return new JsonSchemaGenerator(symbols, allSymbols, userSymbols, inheritingTypes, typeChecker, settings);
     } else {
         diagnostics.forEach((diagnostic) => {
             const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
@@ -1055,21 +1138,21 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}): Jso
     }
 }
 
-export function generateSchema(program: ts.Program, fullTypeName: string, args: PartialArgs = {}): Definition|null {
-    const generator = buildGenerator(program, args);
+export function generateSchema(program: ts.Program, fullTypeName: string, args: PartialArgs = {}, onlyIncludeFiles?: string[]): Definition|null {
+    const generator = buildGenerator(program, args, onlyIncludeFiles);
 
     if (generator === null) {
         return null;
     }
 
     if (fullTypeName === "*") { // All types in file(s)
-        return generator.getSchemaForSymbols(generator.getMainFileSymbols(program));
+        return generator.getSchemaForSymbols(generator.getMainFileSymbols(program, onlyIncludeFiles));
     } else { // Use specific type as root object
         return generator.getSchemaForSymbol(fullTypeName);
     }
 }
 
-export function programFromConfig(configFileName: string): ts.Program {
+export function programFromConfig(configFileName: string, onlyIncludeFiles?: string[]): ts.Program {
     // basically a copy of https://github.com/Microsoft/TypeScript/blob/3663d400270ccae8b69cbeeded8ffdc8fa12d7ad/src/compiler/tsc.ts -> parseConfigFile
     const result = ts.parseConfigFileTextToJson(configFileName, ts.sys.readFile(configFileName)!);
     const configObject = result.config;
@@ -1082,21 +1165,35 @@ export function programFromConfig(configFileName: string): ts.Program {
     delete options.outFile;
     delete options.declaration;
 
-    const program = ts.createProgram(configParseResult.fileNames, options);
+    const program = ts.createProgram(onlyIncludeFiles || configParseResult.fileNames, options);
     return program;
+}
+
+function normalizeFileName(fn: string): string {
+    while (fn.substr(0, 2) === "./") {
+        fn = fn.substr(2);
+    }
+    return fn;
 }
 
 export function exec(filePattern: string, fullTypeName: string, args = getDefaultArgs()) {
     let program: ts.Program;
+    let onlyIncludeFiles: string[] | undefined = undefined;
     if (REGEX_TSCONFIG_NAME.test(path.basename(filePattern))) {
-        program = programFromConfig(filePattern);
+        if (args.include && args.include.length > 0) {
+            const globs: string[][] = args.include.map(f => glob.sync(f));
+            onlyIncludeFiles = ([] as string[]).concat(...globs).map(normalizeFileName);
+        }
+        program = programFromConfig(filePattern, onlyIncludeFiles);
     } else {
-        program = getProgramFromFiles(glob.sync(filePattern), {
+        onlyIncludeFiles = glob.sync(filePattern);
+        program = getProgramFromFiles(onlyIncludeFiles, {
             strictNullChecks: args.strictNullChecks
         });
+        onlyIncludeFiles = onlyIncludeFiles.map(normalizeFileName);
     }
 
-    const definition = generateSchema(program, fullTypeName, args);
+    const definition = generateSchema(program, fullTypeName, args, onlyIncludeFiles);
     if (definition === null) {
         return;
     }

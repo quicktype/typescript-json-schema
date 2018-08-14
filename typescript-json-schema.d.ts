@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-export { Program, CompilerOptions } from "typescript";
+export { Program, CompilerOptions, Symbol } from "typescript";
 export declare function getDefaultArgs(): Args;
 export declare type ValidationKeywords = {
     [prop: string]: boolean;
@@ -18,12 +18,18 @@ export declare type Args = {
     ignoreErrors: boolean;
     out: string;
     validationKeywords: string[];
+    include: string[];
     excludePrivate: boolean;
+    uniqueNames: boolean;
+    rejectDateType: boolean;
+    id: string;
 };
 export declare type PartialArgs = Partial<Args>;
 export declare type PrimitiveType = number | boolean | string | null;
 export declare type Definition = {
     $ref?: string;
+    $schema?: string;
+    $id?: string;
     description?: string;
     allOf?: Definition[];
     oneOf?: Definition[];
@@ -38,28 +44,36 @@ export declare type Definition = {
     minItems?: number;
     additionalItems?: {
         anyOf: Definition[];
-    };
+    } | Definition;
     enum?: PrimitiveType[] | Definition[];
     default?: PrimitiveType | Object;
     additionalProperties?: Definition | boolean;
     required?: string[];
     propertyOrder?: string[];
-    properties?: {};
+    properties?: {
+        [key: string]: any;
+    };
     defaultProperties?: string[];
     typeof?: "function";
 };
+export declare type SymbolRef = {
+    name: string;
+    typeName: string;
+    fullyQualifiedName: string;
+    symbol: ts.Symbol;
+};
 export declare class JsonSchemaGenerator {
     private args;
-    private static validationKeywords;
+    private tc;
+    private symbols;
     private allSymbols;
     private userSymbols;
     private inheritingTypes;
-    private tc;
     private reffedDefinitions;
     private userValidationKeywords;
     private typeNamesById;
     private typeNamesUsed;
-    constructor(allSymbols: {
+    constructor(symbols: SymbolRef[], allSymbols: {
         [name: string]: ts.Type;
     }, userSymbols: {
         [name: string]: ts.Symbol;
@@ -69,29 +83,25 @@ export declare class JsonSchemaGenerator {
     readonly ReffedDefinitions: {
         [key: string]: Definition;
     };
-    private parseValue(value);
-    private parseCommentsIntoDefinition(symbol, definition, otherAnnotations);
-    private extractLiteralValue(typ);
-    private resolveTupleType(propertyType);
-    private getDefinitionForRootType(propertyType, tc, reffedType, definition);
-    private getReferencedTypeSymbol(prop, tc);
-    private getDefinitionForProperty(prop, tc, node);
-    private getEnumDefinition(clazzType, tc, definition);
-    private getUnionDefinition(unionType, prop, tc, unionModifier, definition);
-    private getClassDefinition(clazzType, tc, definition);
-    private simpleTypesAllowedProperties;
-    private addSimpleType(def, type);
-    private makeNullable(def);
-    private getTypeName(typ, tc);
-    private getTypeDefinition(typ, tc, asRef?, unionModifier?, prop?, reffedType?, pairedSymbol?);
+    private parseCommentsIntoDefinition;
+    private getDefinitionForRootType;
+    private getReferencedTypeSymbol;
+    private getDefinitionForProperty;
+    private getEnumDefinition;
+    private getUnionDefinition;
+    private getIntersectionDefinition;
+    private getClassDefinition;
+    private getTypeName;
+    private getTypeDefinition;
     setSchemaOverride(symbolName: string, schema: Definition): void;
     getSchemaForSymbol(symbolName: string, includeReffedDefinitions?: boolean): Definition;
     getSchemaForSymbols(symbolNames: string[], includeReffedDefinitions?: boolean): Definition;
+    getSymbols(name?: string): SymbolRef[];
     getUserSymbols(): string[];
-    getMainFileSymbols(program: ts.Program): string[];
+    getMainFileSymbols(program: ts.Program, onlyIncludeFiles?: string[]): string[];
 }
 export declare function getProgramFromFiles(files: string[], jsonCompilerOptions?: any, basePath?: string): ts.Program;
-export declare function buildGenerator(program: ts.Program, args?: PartialArgs): JsonSchemaGenerator | null;
-export declare function generateSchema(program: ts.Program, fullTypeName: string, args?: PartialArgs): Definition | null;
-export declare function programFromConfig(configFileName: string): ts.Program;
+export declare function buildGenerator(program: ts.Program, args?: PartialArgs, onlyIncludeFiles?: string[]): JsonSchemaGenerator | null;
+export declare function generateSchema(program: ts.Program, fullTypeName: string, args?: PartialArgs, onlyIncludeFiles?: string[]): Definition | null;
+export declare function programFromConfig(configFileName: string, onlyIncludeFiles?: string[]): ts.Program;
 export declare function exec(filePattern: string, fullTypeName: string, args?: Args): void;

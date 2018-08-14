@@ -32,6 +32,16 @@ export function run() {
             .describe("out", "The output file, defaults to using stdout")
         .array("validationKeywords").default("validationKeywords", defaultArgs.validationKeywords)
             .describe("validationKeywords", "Provide additional validation keywords to include.")
+        .boolean("excludePrivate").default("excludePrivate", defaultArgs.excludePrivate)
+            .describe("excludePrivate", "Exclude private members from the schema.")
+        .boolean("uniqueNames").default("uniqueNames", defaultArgs.uniqueNames)
+            .describe("uniqueNames", "Use unique names for type symbols.")
+        .array("include").default("*", defaultArgs.include)
+            .describe("include", "Further limit tsconfig to include only matching files.")
+        .boolean("rejectDateType").default("rejectDateType", defaultArgs.rejectDateType)
+            .describe("rejectDateType", "Rejects Date fields in type definitions.")
+        .string("id").default("id", defaultArgs.id)
+            .describe("id", "ID of schema.")
         .argv;
 
     exec(args._[0], args._[1], {
@@ -48,7 +58,11 @@ export function run() {
         ignoreErrors: args.ignoreErrors,
         out: args.out,
         validationKeywords: args.validationKeywords,
+        include: args.include,
         excludePrivate: args.excludePrivate,
+        uniqueNames: args.uniqueNames,
+        rejectDateType: args.rejectDateType,
+        id: args.id,
     });
 }
 

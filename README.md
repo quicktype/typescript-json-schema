@@ -16,6 +16,9 @@ Generate json-schemas from your Typescript sources.
 * Install with `npm install typescript-json-schema -g`
 * Generate schema from a typescript type: `typescript-json-schema project/directory/tsconfig.json TYPE`
 
+To generate files for only _some_ types in `tsconfig.json` specify
+filenames or globs with the `--include` option. This is especially useful for large projects.
+
 In case no `tsconfig.json` is available for your project, you can directly specify the .ts files (this in this case we use some built-in compiler presets):
 
 * Generate schema from a typescript type: `typescript-json-schema "project/directory/**/*.ts" TYPE`
@@ -38,8 +41,12 @@ Options:
   --useTypeOfKeyword    Use `typeOf` keyword (https://goo.gl/DC6sni) for functions.  [boolean] [default: false]
   --out, -o             The output file, defaults to using stdout
   --validationKeywords  Provide additional validation keywords to include            [array]   [default: []]
+  --include             Further limit tsconfig to include only matching files        [array]   [default: []]
   --ignoreErrors        Generate even if the program has errors.                     [boolean] [default: false]
   --excludePrivate      Exclude private members from the schema                      [boolean] [default: false]
+  --uniqueNames         Use unique names for type symbols.                           [boolean] [default: false]
+  --rejectDateType      Rejects Date fields in type definitions.                     [boolean] [default: false]
+  --id                  Set schema id.                                               [string] [default: ""]
 ```
 
 ### Programmatic use
@@ -80,6 +87,38 @@ generator.getSchemaForSymbol("MyType");
 generator.getSchemaForSymbol("AnotherType");
 ```
 
+```ts
+// In larger projects type names may not be unique,
+// while unique names may be enabled.
+const settings: TJS.PartialArgs = {
+    uniqueNames: true
+};
+
+const generator = TJS.buildGenerator(program, settings);
+
+// A list of all types of a given name can then be retrieved.
+const symbolList = generator.getSymbols("MyType");
+
+// Choose the appropriate type, and continue with the symbol's unique name.
+generator.getSchemaForSymbol(symbolList[1].name);
+
+// Also it is possible to get a list of all symbols.
+const fullSymbolList = generator.getSymbols();
+```
+
+`getSymbols('<SymbolName>')` and `getSymbols()` return an array of `SymbolRef`, which is of the following format:
+
+```ts
+type SymbolRef = {
+  name: string;
+  typeName: string;
+  fullyQualifiedName: string;
+  symbol: ts.Symbol;
+};
+```
+
+`getUserSymbols` and `getMainFileSymbols` return an array of `string`.
+
 ### Annotations
 
 The schema generator converts annotations to JSON schema properties.
@@ -103,7 +142,7 @@ will be translated to
 ```json
 {
     "$ref": "#/definitions/Shape",
-    "$schema": "http://json-schema.org/draft-06/schema#",
+    "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
         "Shape": {
             "properties": {

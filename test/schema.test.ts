@@ -6,8 +6,6 @@ import { resolve } from "path";
 import * as TJS from "../typescript-json-schema";
 
 const ajv = new Ajv();
-const metaSchema = require("ajv/lib/refs/json-schema-draft-06.json");
-ajv.addMetaSchema(metaSchema);
 
 const BASE = "test/programs/";
 
@@ -19,7 +17,8 @@ export function assertSchema(group: string, type: string, settings: TJS.PartialA
             settings.required = true;
         }
 
-        const actual = TJS.generateSchema(TJS.getProgramFromFiles([resolve(BASE + group + "/main.ts")], compilerOptions), type, settings);
+        const files = [resolve(BASE + group + "/main.ts")];
+        const actual = TJS.generateSchema(TJS.getProgramFromFiles(files, compilerOptions), type, settings, files);
 
         // writeFileSync(BASE + group + "/schema.json", stringify(actual, {space: 4}) + "\n\n");
 
@@ -32,9 +31,52 @@ export function assertSchema(group: string, type: string, settings: TJS.PartialA
         // test against the meta schema
         if (actual !== null) {
             ajv.validateSchema(actual);
-            console.warn(ajv.errors);
             assert.equal(ajv.errors, null, "The schema is not valid");
         }
+    });
+}
+
+export function assertSchemas(group: string, type: string, settings: TJS.PartialArgs = {}, compilerOptions?: TJS.CompilerOptions) {
+    it(group + " should create correct schema", () => {
+        if (!("required" in settings)) {
+            settings.required = true;
+        }
+
+        const generator = TJS.buildGenerator(TJS.getProgramFromFiles([resolve(BASE + group + "/main.ts")], compilerOptions), settings);
+        const symbols = generator!.getSymbols(type);
+
+        for (let symbol of symbols) {
+          const actual = generator!.getSchemaForSymbol(symbol.name);
+
+          // writeFileSync(BASE + group + `/schema.${symbol.name}.json`, JSON.stringify(actual, null, 4) + "\n\n");
+
+          const file = readFileSync(BASE + group + `/schema.${symbol.name}.json`, "utf8");
+          const expected = JSON.parse(file);
+
+          assert.isObject(actual);
+          assert.deepEqual(actual, expected, "The schema is not as expected");
+
+          // test against the meta schema
+          if (actual !== null) {
+              ajv.validateSchema(actual);
+              assert.equal(ajv.errors, null, "The schema is not valid");
+          }
+        }
+    });
+}
+
+export function assertRejection(group: string, type: string, settings: TJS.PartialArgs = {}, compilerOptions?: TJS.CompilerOptions) {
+    it(group + " should reject input", () => {
+        let schema = null;
+        assert.throws(() => {
+            if (!("required" in settings)) {
+                settings.required = true;
+            }
+
+            const files = [resolve(BASE + group + "/main.ts")];
+            schema = TJS.generateSchema(TJS.getProgramFromFiles(files, compilerOptions), type, settings, files);
+        });
+        assert.equal(schema, null, "Expected no schema to be generated");
     });
 }
 
@@ -118,6 +160,8 @@ describe("schema", () => {
         assertSchema("type-aliases-recursive-anonymous", "MyAlias");
         assertSchema("type-aliases-recursive-export", "MyObject");
         */
+        assertSchema("type-aliases-tuple-of-variable-length", "MyTuple");
+        assertSchema("type-aliases-tuple-with-rest-element", "MyTuple");
     });
 
     describe("enums", () => {
@@ -167,6 +211,9 @@ describe("schema", () => {
     describe("comments", () => {
         assertSchema("comments", "MyObject");
         assertSchema("comments-override", "MyObject");
+        assertSchema("comments-imports", "MyObject", {
+            aliasRef: true
+        });
     });
 
     describe("types", () => {
@@ -217,6 +264,13 @@ describe("schema", () => {
         assertSchema("string-literals-inline", "MyObject");
     });
 
+    describe("dates", () => {
+        assertSchema("dates", "MyObject");
+        assertRejection("dates", "MyObject", {
+            rejectDateType: true
+        });
+    });
+
     describe("namespaces", () => {
         assertSchema("namespace", "Type");
         assertSchema("namespace-deep-1", "RootNamespace.Def");
@@ -240,6 +294,44 @@ describe("schema", () => {
         assertSchema("private-members", "MyObject", {
             excludePrivate: true
         });
+
+        assertSchemas("unique-names", "MyObject", {
+            uniqueNames: true
+        });
+
         assertSchema("builtin-names", "Ext.Foo");
+
+        assertSchema("user-symbols", "*");
+
+        assertSchemas("argument-id", "MyObject", {
+            id: "someSchemaId"
+        });
+    });
+});
+
+describe("tsconfig.json", () => {
+    it("should read files from tsconfig.json", () => {
+        const program = TJS.programFromConfig(resolve(BASE + "tsconfig/tsconfig.json"));
+        const generator = TJS.buildGenerator(program);
+        assert(generator !== null);
+        assert.instanceOf(generator, TJS.JsonSchemaGenerator);
+        if (generator !== null) {
+            assert.doesNotThrow(() => generator.getSchemaForSymbol("IncludedAlways"));
+            assert.doesNotThrow(() => generator.getSchemaForSymbol("IncludedOnlyByTsConfig"));
+            assert.throws(() => generator.getSchemaForSymbol("Excluded"));
+        }
+    });
+    it("should support includeOnlyFiles with tsconfig.json", () => {
+        const program = TJS.programFromConfig(
+            resolve(BASE + "tsconfig/tsconfig.json"), [resolve(BASE + "tsconfig/includedAlways.ts")]
+        );
+        const generator = TJS.buildGenerator(program);
+        assert(generator !== null);
+        assert.instanceOf(generator, TJS.JsonSchemaGenerator);
+        if (generator !== null) {
+            assert.doesNotThrow(() => generator.getSchemaForSymbol("IncludedAlways"));
+            assert.throws(() => generator.getSchemaForSymbol("Excluded"));
+            assert.throws(() => generator.getSchemaForSymbol("IncludedOnlyByTsConfig"));
+        }
     });
 });

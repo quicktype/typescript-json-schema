@@ -1,5 +1,5 @@
 {
-    "$schema": "http://json-schema.org/draft-06/schema#",
+    "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
         "MyMap1": {
             "additionalProperties": {
@@ -27,11 +27,15 @@
         },
         "map2": {
             "$ref": "#/definitions/MyMap2"
+        },
+        "map3": {
+            "$ref": "#/definitions/MyMap2"
         }
     },
     "required": [
         "map1",
-        "map2"
+        "map2",
+        "map3"
     ],
     "type": "object"
 }
