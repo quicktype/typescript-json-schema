@@ -152,14 +152,19 @@ function extractLiteralValue(typ: ts.Type): PrimitiveType | undefined {
     if (str === undefined) {
         str = (typ as any).text;
     }
+    if (typeof str === "bigint") {
+        return undefined;
+    }
     if (typ.flags & ts.TypeFlags.StringLiteral) {
-        return str;
+        // FIXME: This cast shouldn't be necessary
+        return str as PrimitiveType;
     } else if (typ.flags & ts.TypeFlags.BooleanLiteral) {
         return (typ as any).intrinsicName === "true";
     } else if (typ.flags & ts.TypeFlags.EnumLiteral) {
         // or .text for old TS
         const num = parseFloat(str as string);
-        return isNaN(num) ? str : num;
+        // FIXME: This cast shouldn't be necessary
+        return isNaN(num) ? (str as PrimitiveType) : num;
     } else if (typ.flags & ts.TypeFlags.NumberLiteral) {
         return parseFloat(str as string);
     }
@@ -1067,7 +1072,7 @@ export function buildGenerator(program: ts.Program, args: PartialArgs = {}, only
         }
     }
 
-    let diagnostics: Array<ts.Diagnostic> = [];
+    let diagnostics: ReadonlyArray<ts.Diagnostic> = [];
 
     if (!args.ignoreErrors) {
         diagnostics = ts.getPreEmitDiagnostics(program);

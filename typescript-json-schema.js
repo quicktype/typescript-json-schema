@@ -91,6 +91,9 @@ function extractLiteralValue(typ) {
     if (str === undefined) {
         str = typ.text;
     }
+    if (typeof str === "bigint") {
+        return undefined;
+    }
     if (typ.flags & ts.TypeFlags.StringLiteral) {
         return str;
     }
