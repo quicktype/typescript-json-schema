@@ -1,75 +1,75 @@
 {
-  "name": "typescript-json-schema",
-  "version": "0.31.0",
-  "description": "typescript-json-schema generates JSON Schema files from your Typescript sources",
-  "main": "typescript-json-schema.js",
-  "typings": "typescript-json-schema.d.ts",
-  "bin": {
-    "typescript-json-schema": "./bin/typescript-json-schema"
-  },
-  "author": "Yousef El-Dardiry and Dominik Moritz",
-  "contributors": [
-    {
-      "name": "Yousef El-Dardiry",
-      "email": "yousef@tweetbeam.com",
-      "url": "http://www.twitter.com/yousefed"
+    "name": "@mark.probst/typescript-json-schema",
+    "version": "0.31.0",
+    "description": "typescript-json-schema generates JSON Schema files from your Typescript sources",
+    "main": "typescript-json-schema.js",
+    "typings": "typescript-json-schema.d.ts",
+    "bin": {
+        "typescript-json-schema": "./bin/typescript-json-schema"
     },
-    {
-      "name": "Dominik Moritz",
-      "email": "domoritz@gmail.com",
-      "url": "https://www.domoritz.de/"
+    "author": "Yousef El-Dardiry and Dominik Moritz",
+    "contributors": [
+        {
+            "name": "Yousef El-Dardiry",
+            "email": "yousef@tweetbeam.com",
+            "url": "http://www.twitter.com/yousefed"
+        },
+        {
+            "name": "Dominik Moritz",
+            "email": "domoritz@gmail.com",
+            "url": "https://www.domoritz.de/"
+        },
+        {
+            "name": "Vladimir Krivosheev",
+            "email": "develar@gmail.com"
+        },
+        {
+            "name": "Fabian Pirklbauer",
+            "email": "hi@fabiandev.io"
+        }
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:YousefED/typescript-json-schema.git"
     },
-    {
-      "name": "Vladimir Krivosheev",
-      "email": "develar@gmail.com"
+    "licenses": [
+        {
+            "type": "Apache",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+        }
+    ],
+    "keywords": [
+        "typescript",
+        "json",
+        "forms",
+        "jsonschema",
+        "schema"
+    ],
+    "dependencies": {
+        "glob": "~7.1.2",
+        "json-stable-stringify": "^1.0.1",
+        "typescript": "~3.0.3",
+        "yargs": "^12.0.1"
     },
-    {
-      "name": "Fabian Pirklbauer",
-      "email": "hi@fabiandev.io"
+    "devDependencies": {
+        "@types/assertion-error": "^1.1.0",
+        "@types/chai": "^4.1.4",
+        "@types/glob": "^5.0.35",
+        "@types/json-stable-stringify": "^1.0.32",
+        "@types/mocha": "^5.2.5",
+        "@types/node": "^10.5.4",
+        "ajv": "^6.5.2",
+        "chai": "^4.1.2",
+        "mocha": "^5.2.0",
+        "source-map-support": "^0.5.6",
+        "ts-node": "^7.0.0",
+        "tslint": "^5.11.0"
+    },
+    "scripts": {
+        "test": "npm run build && mocha -t 5000 --require source-map-support/register test",
+        "debug": "ts-node --inspect=19248 --debug-brk typescript-json-schema-cli.ts",
+        "run": "ts-node typescript-json-schema-cli.ts",
+        "build": "tsc -p .",
+        "lint": "tslint --project tsconfig.json -c tslint.json --exclude '**/*.d.ts'"
     }
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:YousefED/typescript-json-schema.git"
-  },
-  "licenses": [
-    {
-      "type": "Apache",
-      "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
-    }
-  ],
-  "keywords": [
-    "typescript",
-    "json",
-    "forms",
-    "jsonschema",
-    "schema"
-  ],
-  "dependencies": {
-    "glob": "~7.1.2",
-    "json-stable-stringify": "^1.0.1",
-    "typescript": "^3.0.1",
-    "yargs": "^12.0.1"
-  },
-  "devDependencies": {
-    "@types/assertion-error": "^1.1.0",
-    "@types/chai": "^4.1.4",
-    "@types/glob": "^5.0.35",
-    "@types/json-stable-stringify": "^1.0.32",
-    "@types/mocha": "^5.2.5",
-    "@types/node": "^10.5.4",
-    "ajv": "^6.5.2",
-    "chai": "^4.1.2",
-    "mocha": "^5.2.0",
-    "source-map-support": "^0.5.6",
-    "ts-node": "^7.0.0",
-    "tslint": "^5.11.0"
-  },
-  "scripts": {
-    "test": "npm run build && mocha -t 5000 --require source-map-support/register test",
-    "debug": "ts-node --inspect=19248 --debug-brk typescript-json-schema-cli.ts",
-    "run": "ts-node typescript-json-schema-cli.ts",
-    "build": "tsc -p .",
-    "lint": "tslint --project tsconfig.json -c tslint.json --exclude '**/*.d.ts'"
-  }
 }
